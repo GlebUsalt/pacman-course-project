@@ -1,222 +1,473 @@
-#define _CRT_SECURE_NO_WARNINGS
-#include <stdlib.h>
-#include <stdio.h>
-#include <math.h>
-#include <stdbool.h>
-#include <string.h>
-#include "constants.h"
 #include "game.h"
 #include "highscores.h"
+#include <stdlib.h>
 
-char grid[ROWS][COLS];
-Pacman pacman;
-Ghost ghosts[NUM_GHOSTS];
-int score = 0;
-int lives = 3;
-int dotsLeft = 0;
-bool frightened = false;
-int frightTimer = 0;
-bool gameOver = false;
-bool win = false;
-int globalTick = 0;
-double lastUpdateTime = 0.0;
+#define PATH_INF 10000
 
-static int ghostStartX[NUM_GHOSTS] = { 10, 10, 9, 11 };
-static int ghostStartY[NUM_GHOSTS] = { 10, 11, 10, 10 };
-static float ghostColors[NUM_GHOSTS][3] = {
+
+static const char* MAP_TEMPLATE[ROWS] = {
+    "WWWWWWWWWWWWWWWWWWWWW",
+    "WO.......WWW.......OW",
+    "W........WWW........W",
+    "W..WWW...WWW...WWW..W",
+    "W..W W...WWW...W W..W",
+    "W..WWW...WWW...WWW..W",
+    "W......WWWWWWW......W",
+    "W.W....WWWWWWW....W.W",
+    "W...................W",
+    "WWWW.W.WWWWWWW.W.WWWW",
+    "WWWW.W.W     W.W.WWWW",
+    "E....W.W     W.W....E",
+    "WWWW.W.W     W.W.WWWW",
+    "WWWW.W.W     W.W.WWWW",
+    "W......WWW WWW......W",
+    "W..WWW.........WWW..W",
+    "W....W...WWW...W....W",
+    "W....W.W..W..W.W....W",
+    "W.W..W.W..W..W.W..W.W",
+    "W.W....W.. ..W....W.W",
+    "W.WWWWWW.....WWWWWW.W",
+    "WO.................OW",
+    "WWWWWWWWWWWWWWWWWWWWW"
+};
+
+static const int GHOST_START_ROW[NUM_GHOSTS] = { 10, 10, 11, 11 };
+static const int GHOST_START_COL[NUM_GHOSTS] = { 10, 11, 11, 10 };
+
+static const int SCATTER_ROW[NUM_GHOSTS] = { 1, 1, 21, 21 };
+static const int SCATTER_COL[NUM_GHOSTS] = { 19, 1, 19, 1 };
+
+static const int DIR_R[4] = { -1, 1, 0, 0 };
+static const int DIR_C[4] = {  0, 0, -1, 1 };
+
+static const float GHOST_COLORS[NUM_GHOSTS][3] = {
     {1.0f, 0.0f, 0.0f},
     {1.0f, 0.5f, 0.8f},
     {0.3f, 1.0f, 1.0f},
     {0.9f, 0.6f, 0.2f}
 };
 
-void initGame() {
-    for (int i = 0; i < ROWS; i++)
-        for (int j = 0; j < COLS; j++) grid[i][j] = DOT;
-    for (int i = 0; i < ROWS; i++) { grid[i][0] = WALL; grid[i][COLS - 1] = WALL; }
-    for (int j = 0; j < COLS; j++) { grid[0][j] = WALL; grid[ROWS - 1][j] = WALL; }
+static const int PACMAN_START_ROW = 19;
+static const int PACMAN_START_COL = 10;
 
-    int top = 9, bottom = 14, left = 7, right = 13;
-    for (int i = top; i <= bottom; i++) { grid[i][left] = WALL; grid[i][right] = WALL; }
-    for (int j = left; j <= right; j++) grid[top][j] = WALL;
-    int entrance = (left + right) / 2;
-    for (int j = left; j <= right; j++) {
-        if (j == entrance) grid[bottom][j] = EMPTY;
-        else grid[bottom][j] = WALL;
-    }
-    for (int i = top + 1; i < bottom; i++)
-        for (int j = left + 1; j < right; j++)
-            if (grid[i][j] == DOT) grid[i][j] = EMPTY;
 
-    for (int j = 3; j <= 5; j++) {
-        grid[3][j] = WALL;
-        if (j == 4) grid[4][j] = EMPTY; else grid[4][j] = WALL;
-        grid[5][j] = WALL;
-    }
-    for (int j = 15; j <= 17; j++) {
-        grid[3][j] = WALL;
-        if (j == 16) grid[4][j] = EMPTY; else grid[4][j] = WALL;
-        grid[5][j] = WALL;
-    }
-    for (int j = 1; j <= 3; j++) { grid[9][j] = WALL; grid[10][j] = WALL; grid[12][j] = WALL; grid[13][j] = WALL; }
-    for (int j = 7; j <= 13; j++) {
-        grid[7][j] = WALL;
-        if (j == 7 || j == 13) grid[6][j] = WALL;
-    }
-    for (int j = 8; j <= 12; j++) grid[6][j] = WALL;
-    for (int j = 17; j <= 19; j++) { grid[9][j] = WALL; grid[10][j] = WALL; grid[12][j] = WALL; grid[13][j] = WALL; }
-    for (int j = 3; j <= 5; j++) grid[15][j] = WALL;
-    for (int i = 16; i <= 18; i++) grid[i][5] = WALL;
-    for (int i = 18; i <= 20; i++) grid[i][2] = WALL;
-    for (int j = 2; j <= 7; j++) grid[20][j] = WALL;
-    for (int i = 17; i <= 20; i++) grid[i][7] = WALL;
-    for (int j = 15; j <= 17; j++) grid[15][j] = WALL;
-    for (int i = 16; i <= 18; i++) grid[i][15] = WALL;
-    for (int i = 18; i <= 20; i++) grid[i][18] = WALL;
-    for (int j = 13; j <= 18; j++) grid[20][j] = WALL;
-    for (int i = 17; i <= 20; i++) grid[i][13] = WALL;
-    for (int j = 9; j <= 11; j++) grid[16][j] = WALL;
-    for (int i = 16; i <= 18; i++) grid[i][10] = WALL;
-    grid[7][2] = WALL; grid[7][18] = WALL;
-    for (int i = 9; i <= 13; i++) {
-        grid[i][5] = WALL;
-        grid[i][15] = WALL;
-    }
-    for (int i = 1; i <= 5; i++) {
-        grid[i][9] = WALL;
-        grid[i][10] = WALL;
-        grid[i][11] = WALL;
-    }
-    grid[1][1] = ENERGIZER;
-    grid[1][COLS - 2] = ENERGIZER;
-    grid[ROWS - 2][1] = ENERGIZER;
-    grid[ROWS - 2][COLS - 2] = ENERGIZER;
-    int midRow = ROWS / 2;
-    grid[midRow][0] = PORTAL;
-    grid[midRow][COLS - 1] = PORTAL;
-
-    pacman.x = 19; pacman.y = 10;
-    pacman.dx = 0; pacman.dy = -1;
-    pacman.nextDx = 0; pacman.nextDy = -1;
-    if (grid[pacman.x][pacman.y] == DOT || grid[pacman.x][pacman.y] == ENERGIZER) grid[pacman.x][pacman.y] = EMPTY;
+static int findGhostAt(const Game* game, int row, int col) {
     for (int g = 0; g < NUM_GHOSTS; g++) {
-        int sx = ghostStartX[g], sy = ghostStartY[g];
-        if (grid[sx][sy] == DOT || grid[sx][sy] == ENERGIZER) grid[sx][sy] = EMPTY;
+        if (game->ghosts[g].row == row && game->ghosts[g].col == col)
+            return g;
     }
-
-    dotsLeft = 0;
-    for (int i = 0; i < ROWS; i++)
-        for (int j = 0; j < COLS; j++)
-            if (grid[i][j] == DOT || grid[i][j] == ENERGIZER) dotsLeft++;
-
-    for (int g = 0; g < NUM_GHOSTS; g++) {
-        ghosts[g].x = ghostStartX[g]; ghosts[g].y = ghostStartY[g];
-        ghosts[g].startX = ghostStartX[g]; ghosts[g].startY = ghostStartY[g];
-        ghosts[g].r = ghostColors[g][0]; ghosts[g].g = ghostColors[g][1]; ghosts[g].b = ghostColors[g][2];
-        ghosts[g].under = grid[ghosts[g].x][ghosts[g].y];
-        grid[ghosts[g].x][ghosts[g].y] = GHOST_CHAR;
-    }
-    grid[pacman.x][pacman.y] = EMPTY;
-
-    score = 0; lives = 3; frightened = false; frightTimer = 0; gameOver = false; win = false;
+    return -1;
 }
 
-void movePacman() {
-    int nx = pacman.x + pacman.nextDx, ny = pacman.y + pacman.nextDy;
-    if (nx >= 0 && nx < ROWS && ny >= 0 && ny < COLS) {
-        char c = grid[nx][ny];
-        if (c != WALL && c != GHOST_CHAR) {
-            pacman.dx = pacman.nextDx;
-            pacman.dy = pacman.nextDy;
+static void eatGhost(Game* game, int ghostIdx) {
+    game->score += 200;
+    Ghost* ghost = &game->ghosts[ghostIdx];
+    ghost->row = ghost->startRow;
+    ghost->col = ghost->startCol;
+    ghost->prevDRow = 0;
+    ghost->prevDCol = 0;
+}
+
+static void killPacman(Game* game) {
+    game->lives--;
+    if (game->lives > 0) {
+        resetAfterDeath(game);
+    } else {
+        game->gameOver = true;
+        addHighScore(game->score);
+    }
+}
+
+static void consumeCell(Game* game, int row, int col, char cell) {
+    if (cell == DOT) {
+        game->score += 10;
+        game->dotsLeft--;
+    } else if (cell == ENERGIZER) {
+        game->score += 50;
+        game->dotsLeft--;
+        game->frightened = true;
+        game->frightTimer = FRIGHT_DURATION;
+    }
+    game->grid[row][col] = EMPTY;
+}
+
+static int clampi(int v, int lo, int hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static bool stepCell(const Game* game, int row, int col, int d,
+                     int* outRow, int* outCol) {
+    int r = row + DIR_R[d];
+    int c = col + DIR_C[d];
+    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
+    char cell = game->grid[r][c];
+    if (cell == WALL) return false;
+    if (cell == PORTAL) {
+        if (c == 0)             c = COLS - 2;
+        else if (c == COLS - 1) c = 1;
+        if (game->grid[r][c] == WALL) return false;
+    }
+    *outRow = r;
+    *outCol = c;
+    return true;
+}
+
+static void bfsFrom(const Game* game, int startRow, int startCol,
+                    int dist[ROWS][COLS]) {
+    int qr[ROWS * COLS], qc[ROWS * COLS];
+    int head = 0, tail = 0;
+
+    for (int r = 0; r < ROWS; r++)
+        for (int c = 0; c < COLS; c++)
+            dist[r][c] = PATH_INF;
+
+    dist[startRow][startCol] = 0;
+    qr[tail] = startRow;
+    qc[tail] = startCol;
+    tail++;
+
+    while (head < tail) {
+        int r = qr[head], c = qc[head];
+        head++;
+        for (int d = 0; d < 4; d++) {
+            int nr, nc;
+            if (!stepCell(game, r, c, d, &nr, &nc)) continue;
+            if (dist[nr][nc] != PATH_INF) continue;
+            dist[nr][nc] = dist[r][c] + 1;
+            qr[tail] = nr;
+            qc[tail] = nc;
+            tail++;
         }
     }
-    int newX = pacman.x + pacman.dx, newY = pacman.y + pacman.dy;
-    if (newX < 0 || newX >= ROWS || newY < 0 || newY >= COLS) {
-        if (pacman.dx == 0 && newY < 0) newY = COLS - 1;
-        else if (pacman.dx == 0 && newY >= COLS) newY = 0;
-        else return;
+}
+
+static void snapToOpen(const Game* game, int* row, int* col) {
+    int r0 = *row, c0 = *col;
+    for (int rad = 0; rad < ROWS + COLS; rad++) {
+        for (int dr = -rad; dr <= rad; dr++) {
+            int rest = rad - abs(dr);
+            for (int s = 0; s < 2; s++) {
+                if (s == 1 && rest == 0) continue;
+                int dc = s == 0 ? rest : -rest;
+                int r = r0 + dr, c = c0 + dc;
+                if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+                char cell = game->grid[r][c];
+                if (cell == WALL || cell == PORTAL || cell == '\0') continue;
+                *row = r;
+                *col = c;
+                return;
+            }
+        }
     }
-    char target = grid[newX][newY];
+}
+
+static int nearestGhostTime(int ghostDist[NUM_GHOSTS][ROWS][COLS],
+                            int row, int col) {
+    int best = PATH_INF * GHOST_SPEED;
+    for (int g = 0; g < NUM_GHOSTS; g++) {
+        int t = ghostDist[g][row][col] * GHOST_SPEED;
+        if (t < best) best = t;
+    }
+    return best;
+}
+
+static int ringRadius(int freePercent) {
+    if (freePercent >= 60) return 8;
+    if (freePercent >= 35) return 6;
+    return 4;
+}
+
+static int crowdPenalty(const Game* game, int g, int row, int col) {
+    int penalty = 0;
+    for (int o = 0; o < NUM_GHOSTS; o++) {
+        if (o == g) continue;
+        int d = abs(row - game->ghosts[o].row) + abs(col - game->ghosts[o].col);
+        if (d < CROWD_RADIUS) penalty += (CROWD_RADIUS - d) * CROWD_WEIGHT;
+    }
+    return penalty;
+}
+
+static void updateCoordinator(Game* game) {
+    const Pacman* p = &game->pacman;
+
+    game->chaseMode =
+        (game->globalTick % (SCATTER_TICKS + CHASE_TICKS)) >= SCATTER_TICKS;
+
+    if (!game->chaseMode) {
+        for (int g = 0; g < NUM_GHOSTS; g++) {
+            game->targetRow[g] = SCATTER_ROW[g];
+            game->targetCol[g] = SCATTER_COL[g];
+        }
+        return;
+    }
+
+    int pacDist[ROWS][COLS];
+    int ghostDist[NUM_GHOSTS][ROWS][COLS];
+    bfsFrom(game, p->row, p->col, pacDist);
+    for (int g = 0; g < NUM_GHOSTS; g++)
+        bfsFrom(game, game->ghosts[g].row, game->ghosts[g].col, ghostDist[g]);
+
+    int total = 0, freeCount = 0;
+    for (int r = 0; r < ROWS; r++) {
+        for (int c = 0; c < COLS; c++) {
+            if (pacDist[r][c] >= PATH_INF) continue;
+            total++;
+            if (pacDist[r][c] * PAC_SPEED < nearestGhostTime(ghostDist, r, c))
+                freeCount++;
+        }
+    }
+    int freePercent = total > 0 ? freeCount * 100 / total : 0;
+
+    int ringR[ROWS * COLS], ringC[ROWS * COLS];
+    int ringCount = 0;
+    for (int radius = ringRadius(freePercent);
+         radius >= 2 && ringCount == 0; radius--) {
+        for (int r = 0; r < ROWS; r++) {
+            for (int c = 0; c < COLS; c++) {
+                if (pacDist[r][c] != radius) continue;
+                if (pacDist[r][c] * PAC_SPEED >= nearestGhostTime(ghostDist, r, c))
+                    continue;
+                ringR[ringCount] = r;
+                ringC[ringCount] = c;
+                ringCount++;
+            }
+        }
+    }
+
+    for (int g = 0; g < NUM_GHOSTS; g++) {
+        game->targetRow[g] = p->row;
+        game->targetCol[g] = p->col;
+    }
+
+    if (ringCount == 0 || freePercent < SQUEEZE_PERCENT) return;
+
+    bool assigned[NUM_GHOSTS];
+    bool used[ROWS * COLS];
+    for (int g = 0; g < NUM_GHOSTS; g++) assigned[g] = (g == 0);
+    for (int i = 0; i < ringCount; i++) used[i] = false;
+
+    for (int round = 1; round < NUM_GHOSTS; round++) {
+        int bestG = -1, bestI = -1, bestScore = 1 << 30;
+        for (int g = 1; g < NUM_GHOSTS; g++) {
+            if (assigned[g]) continue;
+            for (int i = 0; i < ringCount; i++) {
+                if (used[i]) continue;
+                int score = ghostDist[g][ringR[i]][ringC[i]] * PATH_WEIGHT;
+                for (int o = 1; o < NUM_GHOSTS; o++) {
+                    if (!assigned[o]) continue;
+                    int d = abs(ringR[i] - game->targetRow[o]) +
+                            abs(ringC[i] - game->targetCol[o]);
+                    if (d < SPREAD_RADIUS)
+                        score += (SPREAD_RADIUS - d) * SPREAD_WEIGHT;
+                }
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestG = g;
+                    bestI = i;
+                }
+            }
+        }
+        if (bestG == -1) break;
+        game->targetRow[bestG] = ringR[bestI];
+        game->targetCol[bestG] = ringC[bestI];
+        assigned[bestG] = true;
+        used[bestI] = true;
+    }
+
+    for (int g = 1; g < NUM_GHOSTS; g++) {
+        if (assigned[g]) continue;
+        game->targetRow[g] = clampi(p->row + 2 * g * p->dRow, 0, ROWS - 1);
+        game->targetCol[g] = clampi(p->col + 2 * g * p->dCol, 0, COLS - 1);
+        snapToOpen(game, &game->targetRow[g], &game->targetCol[g]);
+    }
+}
+
+
+void initGame(Game* game) {
+    for (int r = 0; r < ROWS; r++)
+        for (int c = 0; c < COLS; c++)
+            game->grid[r][c] = MAP_TEMPLATE[r][c];
+
+    game->pacman.row = PACMAN_START_ROW;
+    game->pacman.col = PACMAN_START_COL;
+    game->pacman.dRow = 0;
+    game->pacman.dCol = -1;
+    game->pacman.nextDRow = 0;
+    game->pacman.nextDCol = -1;
+
+    game->dotsLeft = 0;
+    for (int r = 0; r < ROWS; r++)
+        for (int c = 0; c < COLS; c++)
+            if (game->grid[r][c] == DOT || game->grid[r][c] == ENERGIZER)
+                game->dotsLeft++;
+
+    for (int g = 0; g < NUM_GHOSTS; g++) {
+        Ghost* ghost = &game->ghosts[g];
+        ghost->row = GHOST_START_ROW[g];
+        ghost->col = GHOST_START_COL[g];
+        ghost->startRow = GHOST_START_ROW[g];
+        ghost->startCol = GHOST_START_COL[g];
+        ghost->r = GHOST_COLORS[g][0];
+        ghost->g = GHOST_COLORS[g][1];
+        ghost->b = GHOST_COLORS[g][2];
+        ghost->prevDRow = 0;
+        ghost->prevDCol = 0;
+        game->targetRow[g] = SCATTER_ROW[g];
+        game->targetCol[g] = SCATTER_COL[g];
+    }
+
+    game->score = 0;
+    game->lives = 3;
+    game->frightened = false;
+    game->frightTimer = 0;
+    game->gameOver = false;
+    game->win = false;
+    game->globalTick = 0;
+    game->chaseMode = false;
+}
+
+
+void movePacman(Game* game) {
+    if (game->gameOver || game->win) return;
+
+    Pacman* p = &game->pacman;
+
+    int tryRow = p->row + p->nextDRow;
+    int tryCol = p->col + p->nextDCol;
+    if (tryRow >= 0 && tryRow < ROWS && tryCol >= 0 && tryCol < COLS &&
+        game->grid[tryRow][tryCol] != WALL) {
+        p->dRow = p->nextDRow;
+        p->dCol = p->nextDCol;
+    }
+
+    int newRow = p->row + p->dRow;
+    int newCol = p->col + p->dCol;
+    if (newRow < 0 || newRow >= ROWS || newCol < 0 || newCol >= COLS) return;
+
+    char target = game->grid[newRow][newCol];
     if (target == WALL) return;
-    if (target == GHOST_CHAR) {
-        int idx = -1;
-        for (int g = 0; g < NUM_GHOSTS; g++)
-            if (ghosts[g].x == newX && ghosts[g].y == newY) { idx = g; break; }
-        if (frightened && idx != -1) {
-            score += 200;
-            if (grid[ghosts[idx].x][ghosts[idx].y] == GHOST_CHAR)
-                grid[ghosts[idx].x][ghosts[idx].y] = ghosts[idx].under;
-            ghosts[idx].x = ghosts[idx].startX; ghosts[idx].y = ghosts[idx].startY;
-            ghosts[idx].under = EMPTY;
-            grid[ghosts[idx].x][ghosts[idx].y] = GHOST_CHAR;
+
+    if (target == PORTAL) {
+        int destCol = -1;
+        if (newCol == 0)                destCol = COLS - 2;
+        else if (newCol == COLS - 1)    destCol = 1;
+        if (destCol == -1 || game->grid[newRow][destCol] == WALL) return;
+
+        int ghostIdx = findGhostAt(game, newRow, destCol);
+        if (ghostIdx != -1) {
+            if (game->frightened) {
+                eatGhost(game, ghostIdx);
+            } else {
+                killPacman(game);
+                return;
+            }
         }
-        else {
-            lives--;
-            if (lives > 0) resetAfterDeath();
-            else gameOver = true;
+        p->row = newRow;
+        p->col = destCol;
+        consumeCell(game, p->row, p->col, game->grid[p->row][p->col]);
+        return;
+    }
+
+    int ghostIdx = findGhostAt(game, newRow, newCol);
+    if (ghostIdx != -1) {
+        if (game->frightened) {
+            eatGhost(game, ghostIdx);
+        } else {
+            killPacman(game);
             return;
         }
     }
-    if (target == DOT) { score += 10; dotsLeft--; }
-    else if (target == ENERGIZER) { score += 50; dotsLeft--; frightened = true; frightTimer = FRIGHT_DURATION; }
-    grid[pacman.x][pacman.y] = EMPTY;
-    pacman.x = newX; pacman.y = newY;
+
+    p->row = newRow;
+    p->col = newCol;
+    consumeCell(game, p->row, p->col, target);
 }
 
-void moveGhosts() {
-    const int ghostHouseTop = 9, ghostHouseLeft = 7, ghostHouseRight = 13;
+
+void moveGhosts(Game* game) {
+    if (game->gameOver || game->win) return;
+
+    if (!game->frightened) updateCoordinator(game);
+
     for (int g = 0; g < NUM_GHOSTS; g++) {
-        int dx[] = { -1,1,0,0 }, dy[] = { 0,0,-1,1 };
-        int bestDir = -1, bestDist = frightened ? -1 : 10000;
+        Ghost* ghost = &game->ghosts[g];
+
+        int pathDist[ROWS][COLS];
+        if (game->frightened)
+            bfsFrom(game, game->pacman.row, game->pacman.col, pathDist);
+        else
+            bfsFrom(game, game->targetRow[g], game->targetCol[g], pathDist);
+
+        int validDirs[4], validRow[4], validCol[4];
+        int validCount = 0;
         for (int d = 0; d < 4; d++) {
-            if (ghosts[g].x == ghostHouseTop && (ghosts[g].y >= ghostHouseLeft && ghosts[g].y <= ghostHouseRight) && dx[d] == -1)
-                continue;
-            int nx = ghosts[g].x + dx[d], ny = ghosts[g].y + dy[d];
-            if (nx < 0 || nx >= ROWS || ny < 0 || ny >= COLS) continue;
-            if (grid[nx][ny] == WALL || grid[nx][ny] == GHOST_CHAR) continue;
-            if (!frightened) {
-                if ((dx[d] == -1 && ghosts[g].x - nx < 0) || (dx[d] == 1 && ghosts[g].x - nx > 0) ||
-                    (dy[d] == -1 && ghosts[g].y - ny < 0) || (dy[d] == 1 && ghosts[g].y - ny > 0))
-                    continue;
-            }
-            int dist = abs(nx - pacman.x) + abs(ny - pacman.y);
-            if (frightened) { if (dist > bestDist) { bestDist = dist; bestDir = d; } }
-            else { if (dist < bestDist) { bestDist = dist; bestDir = d; } }
+            int nr, nc;
+            if (!stepCell(game, ghost->row, ghost->col, d, &nr, &nc)) continue;
+            int other = findGhostAt(game, nr, nc);
+            if (other != -1 && other != g) continue;
+            validDirs[validCount] = d;
+            validRow[validCount] = nr;
+            validCol[validCount] = nc;
+            validCount++;
         }
-        if (bestDir != -1) {
-            int nx = ghosts[g].x + dx[bestDir], ny = ghosts[g].y + dy[bestDir];
-            char oldUnder = ghosts[g].under;
-            if (grid[ghosts[g].x][ghosts[g].y] == GHOST_CHAR) grid[ghosts[g].x][ghosts[g].y] = oldUnder;
-            ghosts[g].x = nx; ghosts[g].y = ny;
-            ghosts[g].under = grid[nx][ny];
-            grid[nx][ny] = GHOST_CHAR;
-            if (nx == pacman.x && ny == pacman.y) {
-                if (frightened) {
-                    score += 200;
-                    grid[ghosts[g].x][ghosts[g].y] = ghosts[g].under;
-                    ghosts[g].x = ghosts[g].startX; ghosts[g].y = ghosts[g].startY;
-                    ghosts[g].under = EMPTY; grid[ghosts[g].x][ghosts[g].y] = GHOST_CHAR;
-                }
-                else {
-                    lives--;
-                    if (lives > 0) resetAfterDeath();
-                    else gameOver = true;
-                    return;
-                }
+        if (validCount == 0) continue;
+
+        int bestIdx = -1;
+        int bestScore = 1 << 30;
+
+        for (int i = 0; i < validCount; i++) {
+            int d = validDirs[i];
+            if (validCount > 1 &&
+                DIR_R[d] == -ghost->prevDRow &&
+                DIR_C[d] == -ghost->prevDCol)
+                continue;
+
+            int nr = validRow[i], nc = validCol[i];
+            int score = pathDist[nr][nc] * PATH_WEIGHT;
+            if (game->frightened) score = -score;
+            score += crowdPenalty(game, g, nr, nc);
+
+            if (score < bestScore) {
+                bestScore = score;
+                bestIdx = i;
+            }
+        }
+        if (bestIdx == -1) bestIdx = 0;
+
+        ghost->row = validRow[bestIdx];
+        ghost->col = validCol[bestIdx];
+        ghost->prevDRow = DIR_R[validDirs[bestIdx]];
+        ghost->prevDCol = DIR_C[validDirs[bestIdx]];
+
+        if (ghost->row == game->pacman.row &&
+            ghost->col == game->pacman.col) {
+            if (game->frightened) {
+                eatGhost(game, g);
+            } else {
+                killPacman(game);
+                return;
             }
         }
     }
 }
 
-void resetAfterDeath() {
-    pacman.x = 19; pacman.y = 10;
-    pacman.dx = 0; pacman.dy = -1;
-    pacman.nextDx = 0; pacman.nextDy = -1;
+
+void resetAfterDeath(Game* game) {
+    game->pacman.row = PACMAN_START_ROW;
+    game->pacman.col = PACMAN_START_COL;
+    game->pacman.dRow = 0;
+    game->pacman.dCol = -1;
+    game->pacman.nextDRow = 0;
+    game->pacman.nextDCol = -1;
+
     for (int g = 0; g < NUM_GHOSTS; g++) {
-        if (grid[ghosts[g].x][ghosts[g].y] == GHOST_CHAR) grid[ghosts[g].x][ghosts[g].y] = ghosts[g].under;
-        ghosts[g].x = ghosts[g].startX; ghosts[g].y = ghosts[g].startY;
-        ghosts[g].under = EMPTY;
-        grid[ghosts[g].x][ghosts[g].y] = GHOST_CHAR;
+        Ghost* ghost = &game->ghosts[g];
+        ghost->row = ghost->startRow;
+        ghost->col = ghost->startCol;
+        ghost->prevDRow = 0;
+        ghost->prevDCol = 0;
     }
-    frightened = false; frightTimer = 0;
+
+    game->frightened = false;
+    game->frightTimer = 0;
 }

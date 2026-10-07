@@ -1,10 +1,15 @@
 #ifndef RENDER_H
 #define RENDER_H
 
-#include "constants.h"
+#include "game.h"
 
-void drawScene(void);
-void drawProgressBar(float x, float y, float w, float h, float percent, const char* label);
+void initRender(void);
+void shutdownRender(void);
+void beginFrame(void);
+void setColor(float r, float g, float b);
+void drawScene(const Game* game);
 void drawString(float x, float y, float size, const char* str);
+void drawProgressBar(float x, float y, float w, float h,
+                     float percent, const char* label);
 
 #endif
