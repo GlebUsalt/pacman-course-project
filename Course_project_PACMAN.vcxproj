@@ -20,17 +20,21 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="constants.h" />
+    <ClInclude Include="font.h" />
+    <ClInclude Include="shaders.h" />
     <ClInclude Include="game.h" />
     <ClInclude Include="highscores.h" />
     <ClInclude Include="menu.h" />
     <ClInclude Include="render.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="font.c" />
     <ClCompile Include="game.c" />
     <ClCompile Include="highscores.c" />
     <ClCompile Include="main.c" />
     <ClCompile Include="menu.c" />
     <ClCompile Include="render.c" />
+    <ClCompile Include="shaders.c" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

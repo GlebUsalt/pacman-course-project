@@ -1,124 +1,24 @@
-#include "render.h"
+﻿#include "render.h"
 #include "game.h"
 #include "highscores.h"
+#include "font.h"
+#include "shaders.h"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <math.h>
 #include <stdio.h>
 
-#define MAX_VERTS 9000
-#define VIEW_W 750.0f
-#define VIEW_H 700.0f
+#define MAX_VERTS 64
+#define VIEW_W 750.0f                          //логическая ширина окна в пикселях
+#define VIEW_H 700.0f                          //логическая высота окна
 
-/* ---------- Pixel font (5x7), unchanged ---------- */
+#define WALL_MARGIN 7.0f                       //запас вокруг клетки стены под свечение
 
-static const unsigned char fontData[][7] = {
-    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},
-    {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E},
-    {0x0E,0x11,0x02,0x04,0x08,0x10,0x1F},
-    {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E},
-    {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02},
-    {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E},
-    {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E},
-    {0x1F,0x01,0x02,0x04,0x08,0x08,0x08},
-    {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},
-    {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C},
-    {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},
-    {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
-    {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},
-    {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},
-    {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F},
-    {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10},
-    {0x0E,0x11,0x10,0x13,0x11,0x11,0x0E},
-    {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
-    {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},
-    {0x02,0x02,0x02,0x02,0x12,0x12,0x0C},
-    {0x11,0x12,0x14,0x18,0x14,0x12,0x11},
-    {0x10,0x10,0x10,0x10,0x10,0x10,0x1F},
-    {0x11,0x1B,0x15,0x11,0x11,0x11,0x11},
-    {0x11,0x19,0x15,0x13,0x11,0x11,0x11},
-    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},
-    {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
-    {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D},
-    {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},
-    {0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E},
-    {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
-    {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},
-    {0x11,0x11,0x11,0x0A,0x0A,0x04,0x04},
-    {0x11,0x11,0x11,0x15,0x15,0x1B,0x11},
-    {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
-    {0x11,0x11,0x0A,0x04,0x04,0x04,0x04},
-    {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F}
-};
-
-/* ---------- Shaders (OpenGL 3.3 core) ---------- */
-
-static const char* VERT_SRC =
-    "#version 330 core\n"
-    "layout(location = 0) in vec2 aPos;\n"
-    "uniform vec2  uView;\n"       /* logical window size, replaces glOrtho   */
-    "uniform vec2  uOffset;\n"     /* replaces glTranslatef                   */
-    "uniform vec2  uScale;\n"      /* replaces glScalef                       */
-    "uniform float uAngle;\n"      /* radians, replaces glRotatef             */
-    "out vec2 vLocal;\n"
-    "void main() {\n"
-    "    vLocal = aPos;\n"
-    "    float c = cos(uAngle), s = sin(uAngle);\n"
-    "    vec2 p = aPos * uScale;\n"
-    "    p = vec2(c * p.x - s * p.y, s * p.x + c * p.y) + uOffset;\n"
-    "    gl_Position = vec4(p / uView * 2.0 - 1.0, 0.0, 1.0);\n"
-    "}\n";
-
-/* uMode: 0 flat colour, 1 circle, 2 pac-man, 3 ghost body.
-   uParams: x = radius (px), y = half-size of the quad (px),
-            z = glow strength, w = mouth half-angle (rad).               */
-static const char* FRAG_SRC =
-    "#version 330 core\n"
-    "in vec2 vLocal;\n"
-    "uniform vec3  uColor;\n"
-    "uniform int   uMode;\n"
-    "uniform vec4  uParams;\n"
-    "uniform float uTime;\n"
-    "out vec4 FragColor;\n"
-    "void main() {\n"
-    "    if (uMode == 0) { FragColor = vec4(uColor, 1.0); return; }\n"
-    "    float pad = uParams.y;\n"
-    "    vec2 p = vLocal * pad;\n"
-    "    const float aa = 0.75;\n"
-    "    if (uMode == 3) {\n"
-    "        float yb = -7.0 + 1.5 * sin(p.x * 1.05 + uTime * 8.0);\n"
-    "        float d = (p.y >= 0.0) ? length(p) - 9.0\n"
-    "                               : max(abs(p.x) - 9.0, yb - p.y);\n"
-    "        FragColor = vec4(uColor, 1.0 - smoothstep(-aa, aa, d));\n"
-    "        return;\n"
-    "    }\n"
-    "    float r = uParams.x;\n"
-    "    float dist = length(p);\n"
-    "    float core = 1.0 - smoothstep(r - aa, r + aa, dist);\n"
-    "    if (uMode == 2) {\n"
-    "        float m = uParams.w;\n"
-    "        vec2 q = vec2(p.x, abs(p.y));\n"
-    "        core *= smoothstep(-aa, aa, dot(q, vec2(-sin(m), cos(m))));\n"
-    "    }\n"
-    "    float halo = 0.0;\n"
-    "    if (uParams.z > 0.0 && pad > r && dist > r) {\n"
-    "        float t = clamp((dist - r) / (pad - r), 0.0, 1.0);\n"
-    "        halo = uParams.z * (1.0 - t) * (1.0 - t);\n"
-    "    }\n"
-    "    FragColor = vec4(uColor, max(core, halo));\n"
-    "}\n";
-
-enum { MODE_FLAT = 0, MODE_CIRCLE = 1, MODE_PACMAN = 2, MODE_GHOST = 3 };
-
-static GLuint prog = 0, vao = 0, vbo = 0;
-static GLint uView, uOffset, uScale, uAngle, uColor, uMode, uParams, uTime;
-
-/* ---------- Geometry (triangles only: GL_QUADS is gone in core) ---------- */
+static GLuint vao = 0, vbo = 0;                //объекты видеокарты с геометрией
 
 static float vertData[MAX_VERTS * 2];
 static int vertCount = 0;
-static int quadFirst, loopFirst, centerQuadFirst, triFirst, lineFirst;
-static int glyphFirst[36], glyphCount[36];
+static int quadFirst, centerQuadFirst;
 
 static void addVertex(float x, float y) {
     if (vertCount >= MAX_VERTS) return;
@@ -132,85 +32,20 @@ static void addQuad(float x0, float y0, float x1, float y1) {
     addVertex(x0, y0); addVertex(x1, y1); addVertex(x0, y1);
 }
 
-static GLuint compileShader(GLenum type, const char* src) {
-    GLuint s = glCreateShader(type);
-    glShaderSource(s, 1, &src, NULL);
-    glCompileShader(s);
-    GLint ok = 0;
-    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[1024];
-        glGetShaderInfoLog(s, sizeof(log), NULL, log);
-        fprintf(stderr, "Shader compile error (%s):\n%s\n",
-                type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
-    }
-    return s;
-}
-
-static void buildProgram(void) {
-    GLuint vs = compileShader(GL_VERTEX_SHADER, VERT_SRC);
-    GLuint fs = compileShader(GL_FRAGMENT_SHADER, FRAG_SRC);
-    prog = glCreateProgram();
-    glAttachShader(prog, vs);
-    glAttachShader(prog, fs);
-    glLinkProgram(prog);
-    GLint ok = 0;
-    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[1024];
-        glGetProgramInfoLog(prog, sizeof(log), NULL, log);
-        fprintf(stderr, "Shader link error:\n%s\n", log);
-    }
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-
-    uView   = glGetUniformLocation(prog, "uView");
-    uOffset = glGetUniformLocation(prog, "uOffset");
-    uScale  = glGetUniformLocation(prog, "uScale");
-    uAngle  = glGetUniformLocation(prog, "uAngle");
-    uColor  = glGetUniformLocation(prog, "uColor");
-    uMode   = glGetUniformLocation(prog, "uMode");
-    uParams = glGetUniformLocation(prog, "uParams");
-    uTime   = glGetUniformLocation(prog, "uTime");
-}
-
 void initRender(void) {
     vertCount = 0;
 
-    quadFirst = vertCount;                       /* unit square, 2 triangles  */
+    quadFirst = vertCount;                       //единичный квадрат из 2 треугольников - для прямоугольников
     addQuad(0, 0, 1, 1);
 
-    loopFirst = vertCount;                       /* unit square outline       */
-    addVertex(0, 0); addVertex(1, 0); addVertex(1, 1); addVertex(0, 1);
-
-    centerQuadFirst = vertCount;                 /* [-1,1] square for shaders */
+    centerQuadFirst = vertCount;                 //квадрат [-1,1] - шейдер вырезает из него круги, стены, буквы
     addQuad(-1, -1, 1, 1);
 
-    triFirst = vertCount;
-    addVertex(0.2f, -0.8f); addVertex(0.4f, -0.8f); addVertex(0.3f, -0.6f);
+    initFont();                                //готовим рисунки букв
 
-    lineFirst = vertCount;
-    addVertex(0, 0); addVertex(1, 1);
+    buildProgram();                            //компилируем шейдеры (код в shaders.c)
 
-    const float cellW = 0.6f / 5.0f;
-    const float cellH = 1.0f / 7.0f;
-    for (int idx = 0; idx < 36; idx++) {
-        glyphFirst[idx] = vertCount;
-        for (int row = 0; row < 7; row++) {
-            unsigned char mask = 0x10;
-            for (int col = 0; col < 5; col++) {
-                if (fontData[idx][row] & mask)
-                    addQuad(col * cellW, -(row + 1) * cellH,
-                            (col + 1) * cellW, -row * cellH);
-                mask >>= 1;
-            }
-        }
-        glyphCount[idx] = vertCount - glyphFirst[idx];
-    }
-
-    buildProgram();
-
-    glGenVertexArrays(1, &vao);
+    glGenVertexArrays(1, &vao);                //VAO/VBO - так вершины квадратов попадают на видеокарту
     glBindVertexArray(vao);
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -219,7 +54,7 @@ void initRender(void) {
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (const void*)0);
     glEnableVertexAttribArray(0);
 
-    glEnable(GL_BLEND);
+    glEnable(GL_BLEND);                        //включаем прозрачность, без неё не будет свечения
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glClearColor(0, 0, 0, 1);
 }
@@ -227,17 +62,18 @@ void initRender(void) {
 void shutdownRender(void) {
     if (vbo)  glDeleteBuffers(1, &vbo);
     if (vao)  glDeleteVertexArrays(1, &vao);
-    if (prog) glDeleteProgram(prog);
-    vbo = vao = prog = 0;
+    destroyProgram();
+    vbo = vao = 0;
 }
 
 void beginFrame(void) {
     glClear(GL_COLOR_BUFFER_BIT);
-    glUseProgram(prog);
+    glUseProgram(shaderProg);
     glBindVertexArray(vao);
     glUniform2f(uView, VIEW_W, VIEW_H);
     glUniform1f(uTime, (float)glfwGetTime());
     glUniform1f(uAngle, 0.0f);
+    glUniform1f(uAlpha, 1.0f);
     glUniform1i(uMode, MODE_FLAT);
     glUniform3f(uColor, 1, 1, 1);
 }
@@ -246,35 +82,28 @@ void setColor(float r, float g, float b) {
     glUniform3f(uColor, r, g, b);
 }
 
-/* ---------- Drawing helpers ---------- */
-
-static void drawShape(GLenum mode, int first, int count,
-                      float x, float y, float sx, float sy) {
-    glUniform1i(uMode, MODE_FLAT);
-    glUniform1f(uAngle, 0.0f);
-    glUniform2f(uOffset, x, y);
-    glUniform2f(uScale, sx, sy);
-    glDrawArrays(mode, first, count);
+static void setAlpha(float a) {
+    glUniform1f(uAlpha, a);
 }
 
 static void fillRect(float x, float y, float w, float h) {
-    drawShape(GL_TRIANGLES, quadFirst, 6, x, y, w, h);
+    glUniform1i(uMode, MODE_FLAT);
+    glUniform1f(uAngle, 0.0f);
+    glUniform2f(uOffset, x, y);
+    glUniform2f(uScale, w, h);
+    glDrawArrays(GL_TRIANGLES, quadFirst, 6);
 }
 
-static void outlineRect(float x, float y, float w, float h) {
-    drawShape(GL_LINE_LOOP, loopFirst, 4, x, y, w, h);
-}
-
-/* Draws one of the shader-made shapes inside a square of half-size `pad`. */
+//Рисует фигуру из шейдера (круг, Pac-Man, призрак, стена) внутри квадрата с половиной стороны pad
 static void drawSdf(int mode, float cx, float cy, float pad, float angle,
                     float radius, float glow, float mouth) {
     glUniform1i(uMode, mode);
-    glUniform4f(uParams, radius, pad, glow, mouth);
+    glUniform4f(uParams, radius, pad, glow, mouth);   //все параметры фигуры одним пакетом для шейдера
     glUniform2f(uOffset, cx, cy);
     glUniform2f(uScale, pad, pad);
     glUniform1f(uAngle, angle);
     glDrawArrays(GL_TRIANGLES, centerQuadFirst, 6);
-    glUniform1i(uMode, MODE_FLAT);
+    glUniform1i(uMode, MODE_FLAT);             //возвращаем обычный режим, чтобы не сломать следующий вызов
     glUniform1f(uAngle, 0.0f);
 }
 
@@ -286,118 +115,128 @@ static void glowCircle(float cx, float cy, float r, float haloPad, float glow) {
     drawSdf(MODE_CIRCLE, cx, cy, haloPad, 0.0f, r, glow, 0.0f);
 }
 
-/* ---------- Text ---------- */
-
-static void drawChar(float x, float y, float size, char ch) {
-    if (ch == ' ') return;
-
-    if (ch == '.') {
-        float s = size * 0.15f;
-        fillRect(x + size * 0.3f, y - size * 0.75f, s, s);
-        return;
-    }
-    if (ch == ',') {
-        drawShape(GL_TRIANGLES, triFirst, 3, x, y, size, size);
-        return;
-    }
-    if (ch == ':') {
-        float r = size * 0.1f;
-        fillCircle(x + size * 0.3f, y - size * 0.3f, r);
-        fillCircle(x + size * 0.3f, y - size * 0.7f, r);
-        return;
-    }
-    if (ch == '/') {
-        drawShape(GL_LINES, lineFirst, 2,
-                  x + size * 0.1f, y - size * 0.9f, size * 0.8f, size * 0.8f);
-        return;
-    }
-    if (ch == '%') {
-        float r = size * 0.12f;
-        fillCircle(x + size * 0.22f, y - size * 0.28f, r);
-        fillCircle(x + size * 0.55f, y - size * 0.72f, r);
-        drawShape(GL_LINES, lineFirst, 2,
-                  x + size * 0.15f, y - size * 0.85f, size * 0.47f, size * 0.7f);
-        return;
-    }
-    if (ch == '-') {
-        float w = size * 0.6f;
-        float h = size * 0.1f;
-        fillRect(x, y - size * 0.5f - h, w, h);
-        return;
-    }
-    if (ch == '(' || ch == ')' || ch == '_') return;
-
-    if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 'a' + 'A');
-    if ((ch < '0' || ch > '9') && (ch < 'A' || ch > 'Z')) return;
-
-    int idx;
-    if (ch >= '0' && ch <= '9') idx = ch - '0';
-    else                        idx = ch - 'A' + 10;
-    if (idx < 0 || idx >= 36) return;
-
-    drawShape(GL_TRIANGLES, glyphFirst[idx], glyphCount[idx], x, y, size, size);
+//Отрезок с круглыми концами и толщиной r: из таких отрезков состоят буквы и рамки
+static void drawCapsule(float ax, float ay, float bx, float by, float r) {
+    float dx = bx - ax, dy = by - ay;
+    float half = 0.5f * sqrtf(dx * dx + dy * dy);   //половина длины отрезка
+    float pad = r + 1.5f;
+    glUniform1i(uMode, MODE_CAPSULE);
+    glUniform4f(uParams, half, pad, r, half + pad);
+    glUniform2f(uOffset, 0.5f * (ax + bx), 0.5f * (ay + by));
+    glUniform2f(uScale, half + pad, pad);
+    glUniform1f(uAngle, atan2f(dy, dx));        //поворачиваем квадрат вдоль отрезка
+    glDrawArrays(GL_TRIANGLES, centerQuadFirst, 6);
+    glUniform1i(uMode, MODE_FLAT);
+    glUniform1f(uAngle, 0.0f);
 }
 
-static void drawDigit(float x, float y, float h, int digit) {
-    if (digit < 0 || digit > 9) return;
-    float w = h * 0.6f, t = h * 0.1f;
-    const bool segs[10][7] = {
-        {1,1,1,1,1,1,0},{0,1,1,0,0,0,0},{1,1,0,1,1,0,1},{1,1,1,1,0,0,1},
-        {0,1,1,0,0,1,1},{1,0,1,1,0,1,1},{1,0,1,1,1,1,1},{1,1,1,0,0,0,0},
-        {1,1,1,1,1,1,1},{1,1,1,1,0,1,1}
-    };
-    const bool* s = segs[digit];
-    if (s[0]) fillRect(x, y - t, w, t);
-    if (s[1]) fillRect(x + w - t, y - h / 2, t, h / 2);
-    if (s[2]) fillRect(x + w - t, y - h, t, h / 2);
-    if (s[3]) fillRect(x, y - h, w, t);
-    if (s[4]) fillRect(x, y - h, t, h / 2);
-    if (s[5]) fillRect(x, y - h / 2, t, h / 2);
-    if (s[6]) { float mid = y - h / 2 + t / 2;
-                fillRect(x, mid - t, w, t); }
+static void strokeRect(float x, float y, float w, float h, float r) {
+    drawCapsule(x,     y,     x + w, y,     r);
+    drawCapsule(x + w, y,     x + w, y + h, r);
+    drawCapsule(x + w, y + h, x,     y + h, r);
+    drawCapsule(x,     y + h, x,     y,     r);
 }
 
-static void drawNumber(float x, float y, float h, int number) {
-    if (number == 0) { drawDigit(x, y, h, 0); return; }
-    char buf[12];
-    sprintf(buf, "%d", number);
-    float sp = h * 0.7f;
-    for (int i = 0; buf[i]; i++)
-        drawDigit(x + i * sp, y, h, buf[i] - '0');
+// Рамка со свечением: сначала широкая бледная линия, поверх неё тонкая яркая
+static void neonRect(float x, float y, float w, float h) {
+    setAlpha(0.18f);
+    strokeRect(x, y, w, h, 5.0f);
+    setAlpha(1.0f);
+    strokeRect(x, y, w, h, 1.6f);
+}
+
+float textWidth(float size, const char* str) {
+    int n = 0;
+    while (str[n]) n++;
+    if (n == 0) return 0.0f;
+    float u = size / 6.0f;
+    return (n - 1) * 5.4f * u + 4.0f * u;
+}
+
+static void drawText(float x, float y, float size, const char* str,
+                     float thickness, float alpha) {
+    float u = size / 6.0f;
+    float r = fmaxf(0.6f, u * 0.3f) * thickness;
+    float bottom = y - size;
+    setAlpha(alpha);
+    for (; *str; str++) {
+        unsigned char ch = (unsigned char)*str;
+        if (ch >= 'a' && ch <= 'z') ch = (unsigned char)(ch - 'a' + 'A');
+        const Glyph* g = getGlyph(ch);                 //рисунок буквы из font.c
+        if (g) {
+            for (int i = 0; i < g->n; i++)
+                drawCapsule(x + g->seg[i][0] * u, bottom + g->seg[i][1] * u,
+                            x + g->seg[i][2] * u, bottom + g->seg[i][3] * u, r);
+        }
+        x += 5.4f * u;
+    }
+    setAlpha(1.0f);
 }
 
 void drawString(float x, float y, float size, const char* str) {
-    float spacing = size * 0.7f;
-    while (*str) {
-        drawChar(x, y, size, *str);
-        x += spacing;
-        str++;
-    }
+    drawText(x, y, size, str, 1.0f, 1.0f);
+}
+
+void drawStringGlow(float x, float y, float size, const char* str) {
+    drawText(x, y, size, str, 1.0f, 1.0f);
+}
+
+void drawStringCentered(float cx, float y, float size, const char* str) {
+    drawString(cx - textWidth(size, str) * 0.5f, y, size, str);
+}
+
+void drawStringCenteredGlow(float cx, float y, float size, const char* str) {
+    drawStringGlow(cx - textWidth(size, str) * 0.5f, y, size, str);
 }
 
 void drawProgressBar(float x, float y, float w, float h,
                      float percent, const char* label) {
-    setColor(0.2f, 0.2f, 0.6f);
+    float cx = x + w * 0.5f;
+
+    setColor(0.3f, 0.8f, 1.0f);
+    drawStringCenteredGlow(cx, y + 50, 22, label);
+
+    setColor(0.04f, 0.07f, 0.18f);
     fillRect(x, y - h, w, h);
+    setColor(0.1f, 0.9f, 1.0f);
+    fillRect(x + 3, y - h + 3, (w - 6) * (percent / 100.0f), h - 6);
+    setColor(0.2f, 0.6f, 1.0f);
+    neonRect(x, y - h, w, h);
 
-    setColor(0.0f, 1.0f, 0.2f);
-    fillRect(x, y - h, w * (percent / 100.0f), h);
-
-    setColor(1, 1, 1);
-    drawString(x + w / 2 - 40, y - h / 2 - 5, 12, label);
     char buf[20];
     sprintf(buf, "%.0f%%", percent);
-    drawString(x + w / 2 - 20, y - h / 2 - 25, 12, buf);
+    setColor(1, 1, 1);
+    drawStringCentered(cx, y - h - 22, 20, buf);
 }
 
-/* ---------- Scene ---------- */
+static bool isWallAt(const Game* game, int r, int c) {
+    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
+    return game->grid[r][c] == WALL;
+}
 
 void drawScene(const Game* game) {
     beginFrame();
-    const float offsetX = 100.0f;
+    const float offsetX = (VIEW_W - COLS * CELL_SIZE) * 0.5f;
     const float offsetY = 50.0f;
     const float t = (float)glfwGetTime();
     const float deg = 3.14159265f / 180.0f;
+    const float centerX = VIEW_W * 0.5f;
+
+    setColor(0.15f, 0.5f, 1.0f);
+    for (int r = 0; r < ROWS; r++) {
+        for (int c = 0; c < COLS; c++) {
+            if (game->grid[r][c] != WALL) continue;
+            float mx = offsetX + c * CELL_SIZE + CELL_SIZE / 2;
+            float my = offsetY + (ROWS - 1 - r) * CELL_SIZE + CELL_SIZE / 2;
+            int mask = (isWallAt(game, r - 1, c) ? 1 : 0) |   //маска соседей-стен: 1 сверху, 2 снизу, 4 справа, 8 слева
+                       (isWallAt(game, r + 1, c) ? 2 : 0) |
+                       (isWallAt(game, r, c + 1) ? 4 : 0) |
+                       (isWallAt(game, r, c - 1) ? 8 : 0);
+            if (mask == 15) continue;                   //стена окружена стенами - светить нечему
+            drawSdf(MODE_WALL, mx, my, CELL_SIZE / 2 + WALL_MARGIN, 0.0f,
+                    (float)mask, 0.0f, 0.0f);
+        }
+    }
 
     for (int r = 0; r < ROWS; r++) {
         for (int c = 0; c < COLS; c++) {
@@ -406,12 +245,7 @@ void drawScene(const Game* game) {
             float mx = cx + CELL_SIZE / 2, my = cy + CELL_SIZE / 2;
             char cell = game->grid[r][c];
 
-            if (cell == WALL) {
-                setColor(0, 0, 0.8f);
-                fillRect(cx, cy, CELL_SIZE, CELL_SIZE);
-                setColor(1, 1, 1);
-                outlineRect(cx, cy, CELL_SIZE, CELL_SIZE);
-            } else if (cell == DOT) {
+            if (cell == DOT) {
                 setColor(1, 0.8f, 0.6f);
                 fillCircle(mx, my, 2.5f);
             } else if (cell == ENERGIZER) {
@@ -459,7 +293,17 @@ void drawScene(const Game* game) {
         fillCircle(cx + 3.5f + dirCol * 0.6f, cy + 2.5f + dirRow * 0.6f, 1.2f);
     }
 
-    {
+    static bool wasDead = false;               //запоминаем момент смерти, чтобы анимация шла от нуля
+    static float deathStart = 0.0f;
+    float deathK = 0.0f;
+    if (game->gameOver) {
+        if (!wasDead) { wasDead = true; deathStart = t; }
+        deathK = (t - deathStart) / 0.9f;       //прогресс анимации: 0 - только умер, 1 - исчез (0.9 с)
+    } else {
+        wasDead = false;
+    }
+
+    if (deathK < 1.0f) {
         float cx = offsetX + game->pacman.col * CELL_SIZE + CELL_SIZE / 2;
         float cy = offsetY + (ROWS - 1 - game->pacman.row) * CELL_SIZE + CELL_SIZE / 2;
         float angle = 0;
@@ -470,37 +314,68 @@ void drawScene(const Game* game) {
         else if (game->pacman.dRow == 1)   angle = 270;
         else                               full = true;
 
-        /* mouth opens and closes between 6 and 38 degrees */
-        float mouth = full ? 0.0f
-                           : (22.0f + 16.0f * sinf(t * 14.0f)) * deg;
+        float mouth;
+        if (game->gameOver)
+            mouth = (22.0f + 158.0f * deathK) * deg;   //рот раскрывается до 180 градусов, и Pac-Man пропадает
+        else if (full)
+            mouth = 0.0f;
+        else
+            mouth = (22.0f + 16.0f * sinf(t * 14.0f)) * deg;
         setColor(1, 1, 0);
-        drawSdf(MODE_PACMAN, cx, cy, 16.0f, angle * deg, 10.0f, 0.3f, mouth);
+        drawSdf(MODE_PACMAN, cx, cy, 16.0f, angle * deg, 10.0f,
+                0.3f * (1.0f - deathK), mouth);
     }
 
-    setColor(1, 1, 1);
-    drawString(50, 620, 12, "SCORE");
-    drawNumber(50, 590, 12, game->score);
-    drawString(180, 620, 12, "LIVES");
-    drawDigit(180, 590, 12, game->lives);
-    drawString(310, 620, 12, "DOTS");
-    drawNumber(310, 590, 12, game->dotsLeft);
-    drawString(450, 620, 12, "BEST");
-    drawNumber(450, 590, 12, numScores > 0 ? highScores[0] : 0);
-    if (game->frightened) drawString(570, 620, 12, "FRIGHT");
+    const float labelY = 685.0f, valueY = 660.0f;
+    const float colX[4] = { centerX - 255, centerX - 85, centerX + 85, centerX + 255 };
+    char buf[24];
 
-    if (game->gameOver) {
-        setColor(0.2f, 0, 0);
-        fillRect(120, 250, 360, 120);
+    setColor(0.45f, 0.7f, 1.0f);
+    drawStringCentered(colX[0], labelY, 13, "SCORE");
+    drawStringCentered(colX[1], labelY, 13, "LIVES");
+    drawStringCentered(colX[2], labelY, 13, "DOTS");
+    drawStringCentered(colX[3], labelY, 13, "BEST");
+
+    setColor(1, 1, 1);
+    sprintf(buf, "%d", game->score);
+    drawStringCentered(colX[0], valueY, 22, buf);
+    sprintf(buf, "%d", game->dotsLeft);
+    drawStringCentered(colX[2], valueY, 22, buf);
+    setColor(1, 0.85f, 0.2f);
+    sprintf(buf, "%d", numScores > 0 ? highScores[0] : 0);
+    drawStringCentered(colX[3], valueY, 22, buf);
+
+    setColor(1, 1, 0);
+    for (int i = 0; i < game->lives; i++) {
+        float ix = colX[1] + (i - (game->lives - 1) * 0.5f) * 30.0f;
+        drawSdf(MODE_PACMAN, ix, valueY - 14.0f, 15.0f, 0.0f, 11.0f, 0.0f,
+                25.0f * deg);
+    }
+
+
+    if (game->gameOver || game->win) {
+        const bool lost = game->gameOver;
+        setColor(0, 0, 0);
+        setAlpha(0.6f);
+        fillRect(0, 0, VIEW_W, VIEW_H);
+        setAlpha(0.92f);
+        if (lost) setColor(0.10f, 0.0f, 0.02f);
+        else      setColor(0.0f, 0.08f, 0.03f);
+        fillRect(centerX - 230, 235, 460, 240);
+        setAlpha(1.0f);
+
+        if (lost) setColor(1.0f, 0.2f, 0.25f);
+        else      setColor(0.2f, 1.0f, 0.4f);
+        neonRect(centerX - 230, 235, 460, 240);
+        drawStringCenteredGlow(centerX, 440, 36, lost ? "GAME OVER" : "YOU WIN");
+
         setColor(1, 1, 1);
-        drawString(190, 350, 18, "GAME OVER");
-        drawString(170, 310, 12, "PRESS R TO RESTART");
-        drawString(170, 280, 12, "OR ESC FOR MAIN MENU");
-    } else if (game->win) {
-        setColor(0, 0.2f, 0);
-        fillRect(120, 250, 360, 120);
-        setColor(1, 1, 1);
-        drawString(220, 350, 18, "YOU WIN");
-        drawString(170, 310, 12, "PRESS R TO RESTART");
-        drawString(170, 280, 12, "OR ESC FOR MAIN MENU");
+        sprintf(buf, "SCORE: %d", game->score);
+        drawStringCentered(centerX, 370, 20, buf);
+
+        setColor(1, 0.85f, 0.2f);
+        drawStringCentered(centerX, 320, 16, "PRESS R TO RESTART");
+        setColor(0.7f, 0.8f, 1.0f);
+        drawStringCentered(centerX, 288, 16, "ESC - MAIN MENU");
     }
 }
